@@ -1,4 +1,4 @@
-from fastapi import FastAPI, UploadFile, File, HTTPException, BackgroundTasks
+from fastapi import FastAPI, UploadFile, File, HTTPException, BackgroundTasks, Depends
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 import os
@@ -6,17 +6,17 @@ import uuid
 import shutil
 from pathlib import Path
 import logging
+import requests
+import time
+from typing import Optional
 
 # Configurar logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Importaciones para la conversión de Word a PDF
-import docx
-from reportlab.lib.pagesizes import letter
-from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, PageBreak
-from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
-from reportlab.lib.units import inch
+# Configuración para la API de Cloudmersive
+CLOUDMERSIVE_API_KEY = os.environ.get('CLOUDMERSIVE_API_KEY', '')
+# Si no hay API key en las variables de entorno, se usará un enfoque alternativo
 
 app = FastAPI(
     title="Word to PDF Converter API",
@@ -36,133 +36,125 @@ app.add_middleware(
 
 async def convert_docx_to_pdf(docx_path, pdf_path):
     """
-    Convierte un documento Word (.docx) a PDF usando python-docx y reportlab.
-    Esta implementación funciona en entornos cloud sin dependencias externas.
+    Convierte un documento Word (.docx) a PDF usando LibreOffice o una API externa.
+    Esta implementación intenta preservar el formato original del documento Word.
     
     Args:
         docx_path: Ruta al archivo Word
         pdf_path: Ruta donde se guardará el PDF
     """
     try:
-        # Abrir el documento Word
-        doc = docx.Document(docx_path)
+        # Intentar usar la API de Cloudmersive si hay una clave API disponible
+        if CLOUDMERSIVE_API_KEY:
+            logger.info("Usando API de Cloudmersive para la conversión")
+            return await convert_with_cloudmersive(docx_path, pdf_path)
         
-        # Crear el documento PDF
-        pdf = SimpleDocTemplate(
-            str(pdf_path),
-            pagesize=letter,
-            rightMargin=72,
-            leftMargin=72,
-            topMargin=72,
-            bottomMargin=72
-        )
-        
-        # Obtener estilos
-        styles = getSampleStyleSheet()
-        story = []
-        
-        # Estilo personalizado para el texto normal
-        normal_style = ParagraphStyle(
-            'Normal',
-            parent=styles['Normal'],
-            spaceBefore=0.1*inch,
-            spaceAfter=0.1*inch,
-            leading=14,  # Espacio entre líneas
-        )
-        
-        # Estilo para los títulos
-        title_style = ParagraphStyle(
-            'Title',
-            parent=styles['Heading1'],
-            spaceBefore=0.2*inch,
-            spaceAfter=0.2*inch,
-            fontSize=16,
-            leading=18,  # Espacio entre líneas
-        )
-        
-        # Analizar la estructura del documento para detectar cartas individuales
-        sections = []
-        current_section = []
-        
-        # Detectar patrones que indican el inicio de una nueva carta
-        # Buscaremos líneas que contienen ubicaciones seguidas de nombres (patrón común en cartas)
-        location_pattern_found = False
-        previous_para_empty = True  # Consideramos que antes del primer párrafo hay un "párrafo vacío"
-        
-        for para in doc.paragraphs:
-            text = para.text.strip()
-            
-            # Detectar si es un título o encabezado
-            is_heading = para.style.name.startswith('Heading')
-            
-            # Detectar patrones que indican el inicio de una nueva carta
-            # 1. Es un encabezado
-            # 2. Es un texto que parece una ubicación (ej: "West Montvic, ON – Ben Freyer")
-            # 3. Hay un salto de sección en el documento Word
-            # 4. Hay un párrafo vacío seguido de un párrafo con texto (posible inicio de carta)
-            
-            is_location = False
-            if text and ('–' in text or '-' in text or ',' in text):
-                # Posible patrón de ubicación
-                is_location = True
-            
-            is_new_section = (is_heading or is_location or 
-                             (previous_para_empty and text) or
-                             (para.paragraph_format.page_break_before))
-            
-            # Si detectamos un nuevo inicio de carta y ya tenemos contenido, guardar la sección actual
-            if is_new_section and current_section:
-                sections.append(current_section)
-                current_section = []
-            
-            # Procesar el párrafo
-            if text:
-                if is_heading:
-                    p = Paragraph(text, title_style)
-                elif is_location:
-                    # Estilo especial para ubicaciones/encabezados de carta
-                    location_style = ParagraphStyle(
-                        'Location',
-                        parent=styles['Heading2'],
-                        spaceBefore=0.2*inch,
-                        spaceAfter=0.2*inch,
-                        fontSize=14,
-                        leading=16
-                    )
-                    p = Paragraph(text, location_style)
-                else:
-                    p = Paragraph(text, normal_style)
-                
-                current_section.append(p)
-                current_section.append(Spacer(1, 0.1*inch))
-                previous_para_empty = False
-            else:
-                previous_para_empty = True
-        
-        # Agregar la última sección si contiene algo
-        if current_section:
-            sections.append(current_section)
-        
-        # Construir el story con saltos de página entre secciones
-        for i, section in enumerate(sections):
-            # Agregar salto de página antes de cada sección (excepto la primera)
-            if i > 0:
-                story.append(PageBreak())
-            
-            # Agregar el contenido de la sección
-            story.extend(section)
-        
-        # Si no hay contenido, agregar un párrafo vacío para evitar errores
-        if not story:
-            story.append(Paragraph("No content", normal_style))
-        
-        # Construir el PDF
-        pdf.build(story)
-        
-        logger.info(f"PDF creado exitosamente en: {pdf_path}")
-        return True
+        # Si no hay clave API, intentar usar LibreOffice localmente
+        logger.info("Intentando conversión con LibreOffice")
+        return await convert_with_libreoffice(docx_path, pdf_path)
     except Exception as e:
         logger.error(f"Error al convertir el documento: {str(e)}")
+        return False
+
+async def convert_with_cloudmersive(docx_path, pdf_path):
+    """
+    Convierte un documento Word a PDF usando la API de Cloudmersive.
+    """
+    try:
+        # Configurar la API de Cloudmersive
+        url = "https://api.cloudmersive.com/convert/docx/to/pdf"
+        headers = {"Apikey": CLOUDMERSIVE_API_KEY}
+        
+        # Preparar el archivo para enviar
+        with open(docx_path, 'rb') as file:
+            files = {'inputFile': file}
+            
+            # Hacer la solicitud a la API
+            logger.info("Enviando solicitud a la API de Cloudmersive")
+            response = requests.post(url, headers=headers, files=files)
+            
+            # Verificar si la solicitud fue exitosa
+            if response.status_code == 200:
+                # Guardar el PDF recibido
+                with open(pdf_path, 'wb') as output_file:
+                    output_file.write(response.content)
+                logger.info(f"PDF creado exitosamente con Cloudmersive en: {pdf_path}")
+                return True
+            else:
+                logger.error(f"Error en la API de Cloudmersive: {response.status_code} - {response.text}")
+                return False
+    except Exception as e:
+        logger.error(f"Error al usar la API de Cloudmersive: {str(e)}")
+        return False
+
+async def convert_with_libreoffice(docx_path, pdf_path):
+    """
+    Convierte un documento Word a PDF usando LibreOffice en modo headless.
+    Requiere que LibreOffice esté instalado en el sistema.
+    """
+    import subprocess
+    import platform
+    
+    try:
+        # Determinar el comando según el sistema operativo
+        if platform.system() == "Windows":
+            # En Windows, buscar la instalación de LibreOffice o Microsoft Word
+            libreoffice_paths = [
+                r"C:\Program Files\LibreOffice\program\soffice.exe",
+                r"C:\Program Files (x86)\LibreOffice\program\soffice.exe",
+                # Agregar más rutas si es necesario
+            ]
+            
+            # Encontrar la primera ruta válida
+            soffice_path = None
+            for path in libreoffice_paths:
+                if os.path.exists(path):
+                    soffice_path = path
+                    break
+            
+            if not soffice_path:
+                logger.error("No se encontró LibreOffice instalado")
+                return False
+            
+            # Comando para Windows
+            cmd = [
+                soffice_path,
+                '--headless',
+                '--convert-to', 'pdf',
+                '--outdir', os.path.dirname(pdf_path),
+                str(docx_path)
+            ]
+        else:
+            # Comando para Linux/Mac
+            cmd = [
+                'libreoffice',
+                '--headless',
+                '--convert-to', 'pdf',
+                '--outdir', os.path.dirname(pdf_path),
+                str(docx_path)
+            ]
+        
+        # Ejecutar el comando
+        logger.info(f"Ejecutando comando: {' '.join(cmd)}")
+        process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        stdout, stderr = process.communicate()
+        
+        # Verificar si la conversión fue exitosa
+        if process.returncode == 0:
+            # LibreOffice guarda el archivo con el mismo nombre pero extensión .pdf
+            # Necesitamos renombrarlo si el nombre de destino es diferente
+            generated_pdf = os.path.splitext(docx_path)[0] + ".pdf"
+            if generated_pdf != pdf_path:
+                if os.path.exists(generated_pdf):
+                    shutil.move(generated_pdf, pdf_path)
+            
+            logger.info(f"PDF creado exitosamente con LibreOffice en: {pdf_path}")
+            return True
+        else:
+            logger.error(f"Error al ejecutar LibreOffice: {stderr.decode()}")
+            return False
+    except Exception as e:
+        logger.error(f"Error al usar LibreOffice: {str(e)}")
         return False
 
 # Crear directorios para almacenar archivos temporales
