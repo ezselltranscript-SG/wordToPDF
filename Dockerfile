@@ -4,8 +4,13 @@ FROM python:3.9-slim
 RUN apt-get update && apt-get install -y \
     libreoffice \
     libreoffice-writer \
+    fonts-liberation \
+    procps \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
+    
+# Verificar la instalación de LibreOffice
+RUN libreoffice --version || echo "LibreOffice no está instalado correctamente"
 
 # Establecer directorio de trabajo
 WORKDIR /app

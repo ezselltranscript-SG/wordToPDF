@@ -231,6 +231,58 @@ async def health_check():
     return {"status": "ok", "message": "El servicio está funcionando correctamente"}
 
 
+# Verificar que LibreOffice esté instalado
+def check_libreoffice_installation():
+    import subprocess
+    import platform
+    
+    try:
+        if platform.system() == "Windows":
+            # En Windows, verificar las rutas comunes
+            libreoffice_paths = [
+                r"C:\Program Files\LibreOffice\program\soffice.exe",
+                r"C:\Program Files (x86)\LibreOffice\program\soffice.exe",
+            ]
+            
+            for path in libreoffice_paths:
+                if os.path.exists(path):
+                    logger.info(f"LibreOffice encontrado en: {path}")
+                    return True
+            
+            logger.warning("No se encontró LibreOffice en las rutas comunes de Windows")
+            return False
+        else:
+            # En Linux/Mac, verificar usando which
+            result = subprocess.run(['which', 'libreoffice'], capture_output=True, text=True)
+            if result.returncode == 0:
+                logger.info(f"LibreOffice encontrado en: {result.stdout.strip()}")
+                return True
+            else:
+                # Intentar verificar directamente
+                try:
+                    version_check = subprocess.run(['libreoffice', '--version'], capture_output=True, text=True)
+                    if version_check.returncode == 0:
+                        logger.info(f"LibreOffice versión: {version_check.stdout.strip()}")
+                        return True
+                except Exception:
+                    pass
+                
+                logger.warning("No se encontró LibreOffice en el sistema")
+                return False
+    except Exception as e:
+        logger.error(f"Error al verificar la instalación de LibreOffice: {str(e)}")
+        return False
+
+# Verificar la instalación al inicio
+libreoffice_available = check_libreoffice_installation()
+if not libreoffice_available:
+    logger.warning("⚠️ LibreOffice no está disponible. La conversión de documentos puede fallar.")
+
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run("main:app", host="0.0.0.0", port=8080, reload=True)
+    
+    # Determinar el puerto desde la variable de entorno o usar 8080 por defecto
+    port = int(os.environ.get("PORT", 8080))
+    
+    logger.info(f"Iniciando servidor en el puerto {port}")
+    uvicorn.run("main:app", host="0.0.0.0", port=port, reload=True)
