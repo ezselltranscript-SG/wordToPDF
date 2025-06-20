@@ -80,29 +80,64 @@ async def convert_docx_to_pdf(docx_path, pdf_path):
             leading=18,  # Espacio entre líneas
         )
         
-        # Analizar la estructura del documento para detectar secciones
+        # Analizar la estructura del documento para detectar cartas individuales
         sections = []
         current_section = []
         
-        # Detectar saltos de página y secciones en el documento Word
+        # Detectar patrones que indican el inicio de una nueva carta
+        # Buscaremos líneas que contienen ubicaciones seguidas de nombres (patrón común en cartas)
+        location_pattern_found = False
+        previous_para_empty = True  # Consideramos que antes del primer párrafo hay un "párrafo vacío"
+        
         for para in doc.paragraphs:
+            text = para.text.strip()
+            
             # Detectar si es un título o encabezado
             is_heading = para.style.name.startswith('Heading')
             
-            # Si es un título y ya tenemos contenido, crear una nueva sección
-            if is_heading and current_section:
+            # Detectar patrones que indican el inicio de una nueva carta
+            # 1. Es un encabezado
+            # 2. Es un texto que parece una ubicación (ej: "West Montvic, ON – Ben Freyer")
+            # 3. Hay un salto de sección en el documento Word
+            # 4. Hay un párrafo vacío seguido de un párrafo con texto (posible inicio de carta)
+            
+            is_location = False
+            if text and ('–' in text or '-' in text or ',' in text):
+                # Posible patrón de ubicación
+                is_location = True
+            
+            is_new_section = (is_heading or is_location or 
+                             (previous_para_empty and text) or
+                             (para.paragraph_format.page_break_before))
+            
+            # Si detectamos un nuevo inicio de carta y ya tenemos contenido, guardar la sección actual
+            if is_new_section and current_section:
                 sections.append(current_section)
                 current_section = []
             
             # Procesar el párrafo
-            if para.text.strip():
+            if text:
                 if is_heading:
-                    p = Paragraph(para.text, title_style)
+                    p = Paragraph(text, title_style)
+                elif is_location:
+                    # Estilo especial para ubicaciones/encabezados de carta
+                    location_style = ParagraphStyle(
+                        'Location',
+                        parent=styles['Heading2'],
+                        spaceBefore=0.2*inch,
+                        spaceAfter=0.2*inch,
+                        fontSize=14,
+                        leading=16
+                    )
+                    p = Paragraph(text, location_style)
                 else:
-                    p = Paragraph(para.text, normal_style)
+                    p = Paragraph(text, normal_style)
                 
                 current_section.append(p)
                 current_section.append(Spacer(1, 0.1*inch))
+                previous_para_empty = False
+            else:
+                previous_para_empty = True
         
         # Agregar la última sección si contiene algo
         if current_section:
