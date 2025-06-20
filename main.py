@@ -14,9 +14,7 @@ from typing import Optional
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Configuración para la API de Cloudmersive
-CLOUDMERSIVE_API_KEY = os.environ.get('CLOUDMERSIVE_API_KEY', '')
-# Si no hay API key en las variables de entorno, se usará un enfoque alternativo
+# Configuración de variables de entorno
 
 app = FastAPI(
     title="Word to PDF Converter API",
@@ -36,7 +34,7 @@ app.add_middleware(
 
 async def convert_docx_to_pdf(docx_path, pdf_path):
     """
-    Convierte un documento Word (.docx) a PDF usando la API de Cloudmersive.
+    Convierte un documento Word (.docx) a PDF usando LibreOffice.
     Esta implementación intenta preservar el formato original del documento Word.
     
     Args:
@@ -44,9 +42,9 @@ async def convert_docx_to_pdf(docx_path, pdf_path):
         pdf_path: Ruta donde se guardará el PDF
     """
     try:
-        # Usar la API de Cloudmersive para la conversión
-        logger.info("Usando API de Cloudmersive para la conversión")
-        return await convert_with_cloudmersive(docx_path, pdf_path)
+        # Usar LibreOffice para la conversión
+        logger.info("Usando LibreOffice para la conversión")
+        return await convert_with_libreoffice(docx_path, pdf_path)
     except Exception as e:
         logger.error(f"Error al convertir el documento: {str(e)}")
         return False

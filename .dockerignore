@@ -1,0 +1,43 @@
+# Archivos y directorios de Git
+.git
+.gitignore
+
+# Archivos temporales y de caché
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Directorios de archivos temporales
+uploads/
+outputs/
+
+# Entornos virtuales
+venv/
+ENV/
+
+# Archivos de IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Archivos de sistema
+.DS_Store
+Thumbs.db
