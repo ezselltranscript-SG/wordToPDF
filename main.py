@@ -36,7 +36,7 @@ app.add_middleware(
 
 async def convert_docx_to_pdf(docx_path, pdf_path):
     """
-    Convierte un documento Word (.docx) a PDF usando LibreOffice o una API externa.
+    Convierte un documento Word (.docx) a PDF usando la API de Cloudmersive.
     Esta implementación intenta preservar el formato original del documento Word.
     
     Args:
@@ -44,117 +44,82 @@ async def convert_docx_to_pdf(docx_path, pdf_path):
         pdf_path: Ruta donde se guardará el PDF
     """
     try:
-        # Intentar usar la API de Cloudmersive si hay una clave API disponible
-        if CLOUDMERSIVE_API_KEY:
-            logger.info("Usando API de Cloudmersive para la conversión")
-            return await convert_with_cloudmersive(docx_path, pdf_path)
-        
-        # Si no hay clave API, intentar usar LibreOffice localmente
-        logger.info("Intentando conversión con LibreOffice")
-        return await convert_with_libreoffice(docx_path, pdf_path)
+        # Usar la API de Cloudmersive para la conversión
+        logger.info("Usando API de Cloudmersive para la conversión")
+        return await convert_with_cloudmersive(docx_path, pdf_path)
     except Exception as e:
         logger.error(f"Error al convertir el documento: {str(e)}")
         return False
 
 async def convert_with_cloudmersive(docx_path, pdf_path):
     """
-    Convierte un documento Word a PDF usando la API de Cloudmersive.
+    Convierte un documento Word a PDF usando la API de Cloudmersive o una API alternativa.
     """
     try:
-        # Configurar la API de Cloudmersive
-        url = "https://api.cloudmersive.com/convert/docx/to/pdf"
-        headers = {"Apikey": CLOUDMERSIVE_API_KEY}
+        # Verificar si tenemos una clave API de Cloudmersive
+        if CLOUDMERSIVE_API_KEY:
+            # Configurar la API de Cloudmersive
+            url = "https://api.cloudmersive.com/convert/docx/to/pdf"
+            headers = {"Apikey": CLOUDMERSIVE_API_KEY}
+            
+            # Preparar el archivo para enviar
+            with open(docx_path, 'rb') as file:
+                files = {'inputFile': file}
+                
+                # Hacer la solicitud a la API
+                logger.info("Enviando solicitud a la API de Cloudmersive")
+                response = requests.post(url, headers=headers, files=files)
+                
+                # Verificar si la solicitud fue exitosa
+                if response.status_code == 200:
+                    # Guardar el PDF recibido
+                    with open(pdf_path, 'wb') as output_file:
+                        output_file.write(response.content)
+                    logger.info(f"PDF creado exitosamente con Cloudmersive en: {pdf_path}")
+                    return True
+                else:
+                    logger.error(f"Error en la API de Cloudmersive: {response.status_code} - {response.text}")
+                    # Si hay error, intentar con la API alternativa
+                    return await convert_with_alternative_api(docx_path, pdf_path)
+        else:
+            # Si no hay clave API, usar la API alternativa
+            logger.info("No se encontró clave API de Cloudmersive, usando API alternativa")
+            return await convert_with_alternative_api(docx_path, pdf_path)
+    except Exception as e:
+        logger.error(f"Error al usar la API de Cloudmersive: {str(e)}")
+        # Si hay error, intentar con la API alternativa
+        return await convert_with_alternative_api(docx_path, pdf_path)
+
+async def convert_with_alternative_api(docx_path, pdf_path):
+    """
+    Convierte un documento Word a PDF usando una API alternativa gratuita.
+    Esta es una implementación de respaldo que usa servicios públicos.
+    """
+    try:
+        # Usar la API de ConvertAPI (tienen un plan gratuito limitado)
+        url = "https://v2.convertapi.com/convert/docx/to/pdf"
         
         # Preparar el archivo para enviar
         with open(docx_path, 'rb') as file:
-            files = {'inputFile': file}
+            files = {'File': file}
+            params = {'Secret': 'free'}
             
             # Hacer la solicitud a la API
-            logger.info("Enviando solicitud a la API de Cloudmersive")
-            response = requests.post(url, headers=headers, files=files)
+            logger.info("Enviando solicitud a la API alternativa")
+            response = requests.post(url, files=files, params=params)
             
             # Verificar si la solicitud fue exitosa
             if response.status_code == 200:
                 # Guardar el PDF recibido
                 with open(pdf_path, 'wb') as output_file:
                     output_file.write(response.content)
-                logger.info(f"PDF creado exitosamente con Cloudmersive en: {pdf_path}")
+                logger.info(f"PDF creado exitosamente con API alternativa en: {pdf_path}")
                 return True
             else:
-                logger.error(f"Error en la API de Cloudmersive: {response.status_code} - {response.text}")
+                logger.error(f"Error en la API alternativa: {response.status_code} - {response.text}")
                 return False
     except Exception as e:
-        logger.error(f"Error al usar la API de Cloudmersive: {str(e)}")
-        return False
-
-async def convert_with_libreoffice(docx_path, pdf_path):
-    """
-    Convierte un documento Word a PDF usando LibreOffice en modo headless.
-    Requiere que LibreOffice esté instalado en el sistema.
-    """
-    import subprocess
-    import platform
-    
-    try:
-        # Determinar el comando según el sistema operativo
-        if platform.system() == "Windows":
-            # En Windows, buscar la instalación de LibreOffice o Microsoft Word
-            libreoffice_paths = [
-                r"C:\Program Files\LibreOffice\program\soffice.exe",
-                r"C:\Program Files (x86)\LibreOffice\program\soffice.exe",
-                # Agregar más rutas si es necesario
-            ]
-            
-            # Encontrar la primera ruta válida
-            soffice_path = None
-            for path in libreoffice_paths:
-                if os.path.exists(path):
-                    soffice_path = path
-                    break
-            
-            if not soffice_path:
-                logger.error("No se encontró LibreOffice instalado")
-                return False
-            
-            # Comando para Windows
-            cmd = [
-                soffice_path,
-                '--headless',
-                '--convert-to', 'pdf',
-                '--outdir', os.path.dirname(pdf_path),
-                str(docx_path)
-            ]
-        else:
-            # Comando para Linux/Mac
-            cmd = [
-                'libreoffice',
-                '--headless',
-                '--convert-to', 'pdf',
-                '--outdir', os.path.dirname(pdf_path),
-                str(docx_path)
-            ]
-        
-        # Ejecutar el comando
-        logger.info(f"Ejecutando comando: {' '.join(cmd)}")
-        process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-        stdout, stderr = process.communicate()
-        
-        # Verificar si la conversión fue exitosa
-        if process.returncode == 0:
-            # LibreOffice guarda el archivo con el mismo nombre pero extensión .pdf
-            # Necesitamos renombrarlo si el nombre de destino es diferente
-            generated_pdf = os.path.splitext(docx_path)[0] + ".pdf"
-            if generated_pdf != pdf_path:
-                if os.path.exists(generated_pdf):
-                    shutil.move(generated_pdf, pdf_path)
-            
-            logger.info(f"PDF creado exitosamente con LibreOffice en: {pdf_path}")
-            return True
-        else:
-            logger.error(f"Error al ejecutar LibreOffice: {stderr.decode()}")
-            return False
-    except Exception as e:
-        logger.error(f"Error al usar LibreOffice: {str(e)}")
+        logger.error(f"Error al usar la API alternativa: {str(e)}")
         return False
 
 # Crear directorios para almacenar archivos temporales
