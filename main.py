@@ -6,7 +6,6 @@ import uuid
 import shutil
 from pathlib import Path
 import logging
-import requests
 import time
 from typing import Optional
 
@@ -49,76 +48,7 @@ async def convert_docx_to_pdf(docx_path, pdf_path):
         logger.error(f"Error al convertir el documento: {str(e)}")
         return False
 
-async def convert_with_cloudmersive(docx_path, pdf_path):
-    """
-    Convierte un documento Word a PDF usando la API de Cloudmersive o una API alternativa.
-    """
-    try:
-        # Verificar si tenemos una clave API de Cloudmersive
-        if CLOUDMERSIVE_API_KEY:
-            # Configurar la API de Cloudmersive
-            url = "https://api.cloudmersive.com/convert/docx/to/pdf"
-            headers = {"Apikey": CLOUDMERSIVE_API_KEY}
-            
-            # Preparar el archivo para enviar
-            with open(docx_path, 'rb') as file:
-                files = {'inputFile': file}
-                
-                # Hacer la solicitud a la API
-                logger.info("Enviando solicitud a la API de Cloudmersive")
-                response = requests.post(url, headers=headers, files=files)
-                
-                # Verificar si la solicitud fue exitosa
-                if response.status_code == 200:
-                    # Guardar el PDF recibido
-                    with open(pdf_path, 'wb') as output_file:
-                        output_file.write(response.content)
-                    logger.info(f"PDF creado exitosamente con Cloudmersive en: {pdf_path}")
-                    return True
-                else:
-                    logger.error(f"Error en la API de Cloudmersive: {response.status_code} - {response.text}")
-                    # Si hay error, intentar con la API alternativa
-                    return await convert_with_alternative_api(docx_path, pdf_path)
-        else:
-            # Si no hay clave API, usar la API alternativa
-            logger.info("No se encontró clave API de Cloudmersive, usando API alternativa")
-            return await convert_with_alternative_api(docx_path, pdf_path)
-    except Exception as e:
-        logger.error(f"Error al usar la API de Cloudmersive: {str(e)}")
-        # Si hay error, intentar con la API alternativa
-        return await convert_with_alternative_api(docx_path, pdf_path)
 
-async def convert_with_alternative_api(docx_path, pdf_path):
-    """
-    Convierte un documento Word a PDF usando una API alternativa gratuita.
-    Esta es una implementación de respaldo que usa servicios públicos.
-    """
-    try:
-        # Usar la API de ConvertAPI (tienen un plan gratuito limitado)
-        url = "https://v2.convertapi.com/convert/docx/to/pdf"
-        
-        # Preparar el archivo para enviar
-        with open(docx_path, 'rb') as file:
-            files = {'File': file}
-            params = {'Secret': 'free'}
-            
-            # Hacer la solicitud a la API
-            logger.info("Enviando solicitud a la API alternativa")
-            response = requests.post(url, files=files, params=params)
-            
-            # Verificar si la solicitud fue exitosa
-            if response.status_code == 200:
-                # Guardar el PDF recibido
-                with open(pdf_path, 'wb') as output_file:
-                    output_file.write(response.content)
-                logger.info(f"PDF creado exitosamente con API alternativa en: {pdf_path}")
-                return True
-            else:
-                logger.error(f"Error en la API alternativa: {response.status_code} - {response.text}")
-                return False
-    except Exception as e:
-        logger.error(f"Error al usar la API alternativa: {str(e)}")
-        return False
 
 # Crear directorios para almacenar archivos temporales
 UPLOAD_DIR = Path("uploads")
