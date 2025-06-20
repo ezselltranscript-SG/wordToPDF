@@ -48,6 +48,75 @@ async def convert_docx_to_pdf(docx_path, pdf_path):
         logger.error(f"Error al convertir el documento: {str(e)}")
         return False
 
+async def convert_with_libreoffice(docx_path, pdf_path):
+    """
+    Convierte un documento Word a PDF usando LibreOffice en modo headless.
+    Requiere que LibreOffice esté instalado en el sistema.
+    """
+    import subprocess
+    import platform
+    
+    try:
+        # Determinar el comando según el sistema operativo
+        if platform.system() == "Windows":
+            # En Windows, buscar la instalación de LibreOffice o Microsoft Word
+            libreoffice_paths = [
+                r"C:\Program Files\LibreOffice\program\soffice.exe",
+                r"C:\Program Files (x86)\LibreOffice\program\soffice.exe",
+                # Agregar más rutas si es necesario
+            ]
+            
+            # Encontrar la primera ruta válida
+            soffice_path = None
+            for path in libreoffice_paths:
+                if os.path.exists(path):
+                    soffice_path = path
+                    break
+            
+            if not soffice_path:
+                logger.error("No se encontró LibreOffice instalado")
+                return False
+            
+            # Comando para Windows
+            cmd = [
+                soffice_path,
+                '--headless',
+                '--convert-to', 'pdf',
+                '--outdir', os.path.dirname(pdf_path),
+                str(docx_path)
+            ]
+        else:
+            # Comando para Linux/Mac
+            cmd = [
+                'libreoffice',
+                '--headless',
+                '--convert-to', 'pdf',
+                '--outdir', os.path.dirname(pdf_path),
+                str(docx_path)
+            ]
+        
+        # Ejecutar el comando
+        logger.info(f"Ejecutando comando: {' '.join(cmd)}")
+        process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        stdout, stderr = process.communicate()
+        
+        # Verificar si la conversión fue exitosa
+        if process.returncode == 0:
+            # LibreOffice guarda el archivo con el mismo nombre pero extensión .pdf
+            # Necesitamos renombrarlo si el nombre de destino es diferente
+            generated_pdf = os.path.splitext(docx_path)[0] + ".pdf"
+            if generated_pdf != pdf_path:
+                if os.path.exists(generated_pdf):
+                    shutil.move(generated_pdf, pdf_path)
+            
+            logger.info(f"PDF creado exitosamente con LibreOffice en: {pdf_path}")
+            return True
+        else:
+            logger.error(f"Error al ejecutar LibreOffice: {stderr.decode()}")
+            return False
+    except Exception as e:
+        logger.error(f"Error al usar LibreOffice: {str(e)}")
+        return False
 
 
 # Crear directorios para almacenar archivos temporales
