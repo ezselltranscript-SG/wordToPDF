@@ -5,17 +5,18 @@ import os
 import uuid
 import shutil
 from pathlib import Path
-import subprocess
-import sys
-import platform
 import logging
 
 # Configurar logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Importar docx2pdf para la conversión
-from docx2pdf import convert
+# Importaciones para la conversión de Word a PDF
+import docx
+from reportlab.lib.pagesizes import letter
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, PageBreak
+from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+from reportlab.lib.units import inch
 
 app = FastAPI(
     title="Word to PDF Converter API",
@@ -35,27 +36,98 @@ app.add_middleware(
 
 async def convert_docx_to_pdf(docx_path, pdf_path):
     """
-    Convierte un documento Word (.docx) a PDF usando docx2pdf.
-    Esta biblioteca preserva el formato original del documento Word, incluyendo saltos de página.
+    Convierte un documento Word (.docx) a PDF usando python-docx y reportlab.
+    Esta implementación funciona en entornos cloud sin dependencias externas.
     
     Args:
         docx_path: Ruta al archivo Word
         pdf_path: Ruta donde se guardará el PDF
     """
     try:
-        # Usar docx2pdf para convertir el documento Word a PDF
-        # Esta biblioteca preserva el formato original, incluyendo saltos de página
-        convert(str(docx_path), str(pdf_path))
+        # Abrir el documento Word
+        doc = docx.Document(docx_path)
         
-        # Verificar que el archivo PDF fue creado
-        if os.path.exists(pdf_path):
-            print(f"PDF creado exitosamente en: {pdf_path}")
-            return True
-        else:
-            print(f"Error: No se pudo crear el PDF en {pdf_path}")
-            return False
+        # Crear el documento PDF
+        pdf = SimpleDocTemplate(
+            str(pdf_path),
+            pagesize=letter,
+            rightMargin=72,
+            leftMargin=72,
+            topMargin=72,
+            bottomMargin=72
+        )
+        
+        # Obtener estilos
+        styles = getSampleStyleSheet()
+        story = []
+        
+        # Estilo personalizado para el texto normal
+        normal_style = ParagraphStyle(
+            'Normal',
+            parent=styles['Normal'],
+            spaceBefore=0.1*inch,
+            spaceAfter=0.1*inch,
+            leading=14,  # Espacio entre líneas
+        )
+        
+        # Estilo para los títulos
+        title_style = ParagraphStyle(
+            'Title',
+            parent=styles['Heading1'],
+            spaceBefore=0.2*inch,
+            spaceAfter=0.2*inch,
+            fontSize=16,
+            leading=18,  # Espacio entre líneas
+        )
+        
+        # Analizar la estructura del documento para detectar secciones
+        sections = []
+        current_section = []
+        
+        # Detectar saltos de página y secciones en el documento Word
+        for para in doc.paragraphs:
+            # Detectar si es un título o encabezado
+            is_heading = para.style.name.startswith('Heading')
+            
+            # Si es un título y ya tenemos contenido, crear una nueva sección
+            if is_heading and current_section:
+                sections.append(current_section)
+                current_section = []
+            
+            # Procesar el párrafo
+            if para.text.strip():
+                if is_heading:
+                    p = Paragraph(para.text, title_style)
+                else:
+                    p = Paragraph(para.text, normal_style)
+                
+                current_section.append(p)
+                current_section.append(Spacer(1, 0.1*inch))
+        
+        # Agregar la última sección si contiene algo
+        if current_section:
+            sections.append(current_section)
+        
+        # Construir el story con saltos de página entre secciones
+        for i, section in enumerate(sections):
+            # Agregar salto de página antes de cada sección (excepto la primera)
+            if i > 0:
+                story.append(PageBreak())
+            
+            # Agregar el contenido de la sección
+            story.extend(section)
+        
+        # Si no hay contenido, agregar un párrafo vacío para evitar errores
+        if not story:
+            story.append(Paragraph("No content", normal_style))
+        
+        # Construir el PDF
+        pdf.build(story)
+        
+        logger.info(f"PDF creado exitosamente en: {pdf_path}")
+        return True
     except Exception as e:
-        print(f"Error al convertir el documento: {str(e)}")
+        logger.error(f"Error al convertir el documento: {str(e)}")
         return False
 
 # Crear directorios para almacenar archivos temporales
