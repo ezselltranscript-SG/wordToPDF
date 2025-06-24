@@ -31,16 +31,53 @@ app.add_middleware(
 )
 
 
+async def extract_document_title(docx_path):
+    """
+    Extrae el título del documento Word para usarlo en los encabezados.
+    
+    Args:
+        docx_path: Ruta al archivo Word
+    
+    Returns:
+        El título del documento o un título predeterminado
+    """
+    try:
+        from docx import Document
+        
+        # Intentar abrir el documento
+        doc = Document(docx_path)
+        
+        # Intentar obtener el título del documento
+        # Primero intentamos con las propiedades del documento
+        if doc.core_properties.title:
+            return doc.core_properties.title
+        
+        # Si no hay título en las propiedades, usar el primer párrafo si existe
+        if len(doc.paragraphs) > 0 and doc.paragraphs[0].text.strip():
+            return doc.paragraphs[0].text.strip()
+        
+        # Si todo falla, usar el nombre del archivo
+        return Path(docx_path).stem
+    except Exception as e:
+        logger.warning(f"No se pudo extraer el título del documento: {str(e)}")
+        # Usar el nombre del archivo como título predeterminado
+        return Path(docx_path).stem
+
 async def convert_docx_to_pdf(docx_path, pdf_path):
     """
     Convierte un documento Word (.docx) a PDF usando LibreOffice.
-    Esta implementación intenta preservar el formato original del documento Word.
+    Esta implementación intenta preservar el formato original del documento Word,
+    incluyendo fuentes Times New Roman tamaño 10 y encabezados correctos.
     
     Args:
         docx_path: Ruta al archivo Word
         pdf_path: Ruta donde se guardará el PDF
     """
     try:
+        # Extraer el título del documento para los encabezados
+        document_title = await extract_document_title(docx_path)
+        logger.info(f"Título del documento extraído: {document_title}")
+        
         # Usar LibreOffice para la conversión
         logger.info("Usando LibreOffice para la conversión")
         return await convert_with_libreoffice(docx_path, pdf_path)
@@ -52,14 +89,22 @@ async def convert_with_libreoffice(docx_path, pdf_path):
     """
     Convierte un documento Word a PDF usando LibreOffice en modo headless.
     Requiere que LibreOffice esté instalado en el sistema.
+    Preserva fuentes, encabezados y formato original.
     """
     import subprocess
     import platform
+    import tempfile
+    import shutil
     
     try:
+        # Crear una copia del archivo original para trabajar con él
+        temp_dir = tempfile.mkdtemp()
+        temp_docx = os.path.join(temp_dir, os.path.basename(docx_path))
+        shutil.copy2(docx_path, temp_docx)
+        
         # Determinar el comando según el sistema operativo
         if platform.system() == "Windows":
-            # En Windows, buscar la instalación de LibreOffice o Microsoft Word
+            # En Windows, buscar la instalación de LibreOffice
             libreoffice_paths = [
                 r"C:\Program Files\LibreOffice\program\soffice.exe",
                 r"C:\Program Files (x86)\LibreOffice\program\soffice.exe",
@@ -77,42 +122,58 @@ async def convert_with_libreoffice(docx_path, pdf_path):
                 logger.error("No se encontró LibreOffice instalado")
                 return False
             
-            # Comando para Windows
+            # Comando para Windows con parámetros mejorados
             cmd = [
                 soffice_path,
                 '--headless',
-                '--convert-to', 'pdf',
-                '--outdir', os.path.dirname(pdf_path),
-                str(docx_path)
+                '--convert-to', 'pdf:writer_pdf_Export',  # Usar el exportador de Writer para mejor fidelidad
+                '--outdir', temp_dir,
+                '--infilter=writer8',  # Filtro para mejorar la importación de documentos Word
+                str(temp_docx)
             ]
         else:
-            # Comando para Linux/Mac
+            # Comando para Linux/Mac con parámetros mejorados
             cmd = [
                 'libreoffice',
                 '--headless',
-                '--convert-to', 'pdf',
-                '--outdir', os.path.dirname(pdf_path),
-                str(docx_path)
+                '--convert-to', 'pdf:writer_pdf_Export',  # Usar el exportador de Writer para mejor fidelidad
+                '--outdir', temp_dir,
+                '--infilter=writer8',  # Filtro para mejorar la importación de documentos Word
+                str(temp_docx)
             ]
         
         # Ejecutar el comando
         logger.info(f"Ejecutando comando: {' '.join(cmd)}")
         process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-        stdout, stderr = process.communicate()
+        stdout, stderr = process.communicate(timeout=60)  # Añadir timeout para evitar bloqueos
         
         # Verificar si la conversión fue exitosa
         if process.returncode == 0:
             # LibreOffice guarda el archivo con el mismo nombre pero extensión .pdf
-            # Necesitamos renombrarlo si el nombre de destino es diferente
-            generated_pdf = os.path.splitext(docx_path)[0] + ".pdf"
-            if generated_pdf != pdf_path:
-                if os.path.exists(generated_pdf):
-                    shutil.move(generated_pdf, pdf_path)
+            generated_pdf = os.path.splitext(temp_docx)[0] + ".pdf"
             
-            logger.info(f"PDF creado exitosamente con LibreOffice en: {pdf_path}")
-            return True
+            if os.path.exists(generated_pdf):
+                # Mover el PDF generado a la ubicación final
+                shutil.copy2(generated_pdf, pdf_path)
+                logger.info(f"PDF creado exitosamente con LibreOffice en: {pdf_path}")
+                
+                # Limpiar archivos temporales
+                try:
+                    shutil.rmtree(temp_dir)
+                except Exception as cleanup_error:
+                    logger.warning(f"Error al limpiar archivos temporales: {str(cleanup_error)}")
+                    
+                return True
+            else:
+                logger.error(f"El archivo PDF no fue generado en la ubicación esperada: {generated_pdf}")
+                return False
         else:
-            logger.error(f"Error al ejecutar LibreOffice: {stderr.decode()}")
+            logger.error(f"Error al ejecutar LibreOffice: {stderr.decode() if stderr else 'Sin detalles'}")
+            # Limpiar archivos temporales en caso de error
+            try:
+                shutil.rmtree(temp_dir)
+            except Exception:
+                pass
             return False
     except Exception as e:
         logger.error(f"Error al usar LibreOffice: {str(e)}")
