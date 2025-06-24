@@ -7,7 +7,8 @@ RUN apt-get update && apt-get install -y \
     fonts-liberation \
     fonts-freefont-ttf \
     fonts-dejavu \
-    ttf-mscorefonts-installer \
+    fonts-noto \
+    fonts-urw-base35 \
     procps \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
