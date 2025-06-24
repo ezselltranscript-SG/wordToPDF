@@ -89,26 +89,17 @@ async def convert_with_libreoffice(docx_path, pdf_path):
     """
     Convierte un documento Word a PDF usando LibreOffice en modo headless.
     Requiere que LibreOffice esté instalado en el sistema.
-    Preserva fuentes, encabezados y formato original.
     """
     import subprocess
     import platform
-    import tempfile
-    import shutil
     
     try:
-        # Crear una copia del archivo original para trabajar con él
-        temp_dir = tempfile.mkdtemp()
-        temp_docx = os.path.join(temp_dir, os.path.basename(docx_path))
-        shutil.copy2(docx_path, temp_docx)
-        
         # Determinar el comando según el sistema operativo
         if platform.system() == "Windows":
             # En Windows, buscar la instalación de LibreOffice
             libreoffice_paths = [
                 r"C:\Program Files\LibreOffice\program\soffice.exe",
                 r"C:\Program Files (x86)\LibreOffice\program\soffice.exe",
-                # Agregar más rutas si es necesario
             ]
             
             # Encontrar la primera ruta válida
@@ -122,58 +113,49 @@ async def convert_with_libreoffice(docx_path, pdf_path):
                 logger.error("No se encontró LibreOffice instalado")
                 return False
             
-            # Comando para Windows con parámetros mejorados
+            # Comando para Windows - versión básica que sabemos que funciona
             cmd = [
                 soffice_path,
                 '--headless',
-                '--convert-to', 'pdf:writer_pdf_Export',  # Usar el exportador de Writer para mejor fidelidad
-                '--outdir', temp_dir,
-                '--infilter=writer8',  # Filtro para mejorar la importación de documentos Word
-                str(temp_docx)
+                '--convert-to', 'pdf',
+                '--outdir', os.path.dirname(pdf_path),
+                str(docx_path)
             ]
         else:
-            # Comando para Linux/Mac con parámetros mejorados
+            # Comando para Linux/Mac - versión básica que sabemos que funciona
             cmd = [
                 'libreoffice',
                 '--headless',
-                '--convert-to', 'pdf:writer_pdf_Export',  # Usar el exportador de Writer para mejor fidelidad
-                '--outdir', temp_dir,
-                '--infilter=writer8',  # Filtro para mejorar la importación de documentos Word
-                str(temp_docx)
+                '--convert-to', 'pdf',
+                '--outdir', os.path.dirname(pdf_path),
+                str(docx_path)
             ]
         
         # Ejecutar el comando
         logger.info(f"Ejecutando comando: {' '.join(cmd)}")
         process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-        stdout, stderr = process.communicate(timeout=60)  # Añadir timeout para evitar bloqueos
+        stdout, stderr = process.communicate(timeout=120)  # Aumentar timeout a 2 minutos
         
         # Verificar si la conversión fue exitosa
         if process.returncode == 0:
             # LibreOffice guarda el archivo con el mismo nombre pero extensión .pdf
-            generated_pdf = os.path.splitext(temp_docx)[0] + ".pdf"
+            generated_pdf = os.path.splitext(docx_path)[0] + ".pdf"
             
             if os.path.exists(generated_pdf):
-                # Mover el PDF generado a la ubicación final
-                shutil.copy2(generated_pdf, pdf_path)
-                logger.info(f"PDF creado exitosamente con LibreOffice en: {pdf_path}")
+                # Si el PDF generado no está en la ubicación deseada, moverlo
+                if generated_pdf != pdf_path:
+                    shutil.move(generated_pdf, pdf_path)
                 
-                # Limpiar archivos temporales
-                try:
-                    shutil.rmtree(temp_dir)
-                except Exception as cleanup_error:
-                    logger.warning(f"Error al limpiar archivos temporales: {str(cleanup_error)}")
-                    
+                logger.info(f"PDF creado exitosamente con LibreOffice en: {pdf_path}")
                 return True
             else:
                 logger.error(f"El archivo PDF no fue generado en la ubicación esperada: {generated_pdf}")
+                # Registrar la salida de LibreOffice para diagnóstico
+                logger.error(f"Salida de LibreOffice: {stdout.decode() if stdout else 'Sin salida'}")
+                logger.error(f"Error de LibreOffice: {stderr.decode() if stderr else 'Sin errores reportados'}")
                 return False
         else:
-            logger.error(f"Error al ejecutar LibreOffice: {stderr.decode() if stderr else 'Sin detalles'}")
-            # Limpiar archivos temporales en caso de error
-            try:
-                shutil.rmtree(temp_dir)
-            except Exception:
-                pass
+            logger.error(f"Error al ejecutar LibreOffice (código {process.returncode}): {stderr.decode() if stderr else 'Sin detalles'}")
             return False
     except Exception as e:
         logger.error(f"Error al usar LibreOffice: {str(e)}")
@@ -183,8 +165,33 @@ async def convert_with_libreoffice(docx_path, pdf_path):
 # Crear directorios para almacenar archivos temporales
 UPLOAD_DIR = Path("uploads")
 OUTPUT_DIR = Path("outputs")
-UPLOAD_DIR.mkdir(exist_ok=True)
-OUTPUT_DIR.mkdir(exist_ok=True)
+
+# Asegurarse de que los directorios existan y tengan permisos adecuados
+UPLOAD_DIR.mkdir(exist_ok=True, mode=0o777)
+OUTPUT_DIR.mkdir(exist_ok=True, mode=0o777)
+
+# Verificar que los directorios sean escribibles
+try:
+    # Probar escribiendo un archivo temporal
+    test_file = UPLOAD_DIR / ".test_write"
+    test_file.write_text("test")
+    test_file.unlink()  # Eliminar archivo de prueba
+    
+    test_file = OUTPUT_DIR / ".test_write"
+    test_file.write_text("test")
+    test_file.unlink()  # Eliminar archivo de prueba
+    
+    logger.info("Directorios de carga y salida verificados y escribibles")
+except Exception as e:
+    logger.warning(f"Advertencia: Posible problema de permisos en directorios: {str(e)}")
+    # Intentar corregir permisos
+    try:
+        import subprocess
+        subprocess.run(['chmod', '-R', '777', str(UPLOAD_DIR)])
+        subprocess.run(['chmod', '-R', '777', str(OUTPUT_DIR)])
+        logger.info("Permisos corregidos en directorios")
+    except Exception:
+        logger.warning("No se pudieron corregir permisos automáticamente")
 
 
 @app.post("/convert/", summary="Convertir documento Word a PDF")
