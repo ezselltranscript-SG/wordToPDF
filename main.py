@@ -10,6 +10,10 @@ import tempfile
 import shutil
 from pathlib import Path
 from docx import Document
+from PyPDF2 import PdfWriter, PdfReader
+import io
+from reportlab.pdfgen import canvas
+from reportlab.lib.pagesizes import letter
 
 # Configurar logging
 logging.basicConfig(level=logging.INFO)
@@ -72,6 +76,16 @@ async def convert_word_to_pdf(file: UploadFile = File(...), background_tasks: Ba
             logger.error(f"Error al modificar encabezados en {input_path}")
             raise HTTPException(status_code=500, detail="Error al procesar el documento")
         
+        # Extraer el código base del nombre del archivo
+        base_code = None
+        # Intentar extraer el código base del nombre del archivo
+        match = re.search(r'([0-9-]+[a-zA-Z0-9-]+)', file.filename)
+        if match:
+            base_code = match.group(1).lower()
+        else:
+            # Si no se encuentra en el nombre, usar un valor predeterminado
+            base_code = Path(file.filename).stem.lower()
+        
         # Convertir a PDF usando LibreOffice
         pdf_filename = f"{Path(file.filename).stem}.pdf"
         output_pdf = await convert_to_pdf(modified_docx, str(OUTPUT_DIR))
@@ -80,7 +94,17 @@ async def convert_word_to_pdf(file: UploadFile = File(...), background_tasks: Ba
             logger.error(f"Error al convertir {modified_docx}")
             raise HTTPException(status_code=500, detail="Error al convertir el documento")
         
-        logger.info(f"Conversión exitosa: {output_pdf}")
+        # Modificar el PDF para añadir encabezados correctos en cada página
+        modified_pdf = await add_page_headers_to_pdf(output_pdf, base_code)
+        
+        if not modified_pdf:
+            logger.error(f"Error al modificar encabezados en el PDF {output_pdf}")
+            raise HTTPException(status_code=500, detail="Error al modificar encabezados en el PDF")
+        
+        logger.info(f"Conversión exitosa con encabezados modificados: {modified_pdf}")
+        
+        # Usar el PDF modificado como resultado final
+        output_pdf = modified_pdf
         
         # Limpiar archivos temporales
         if background_tasks:
@@ -199,6 +223,59 @@ async def modify_document_headers(docx_path):
     except Exception as e:
         logger.error(f"Error al modificar encabezados del documento: {str(e)}")
         return docx_path  # Devolver el documento original si hay error
+
+async def add_page_headers_to_pdf(pdf_path, base_code):
+    """
+    Modifica un PDF para añadir encabezados diferentes a cada página
+    con el formato base_code_Part1, base_code_Part2, etc.
+    """
+    try:
+        # Crear un nuevo PDF con los encabezados correctos
+        output_pdf = os.path.join(os.path.dirname(pdf_path), f"headers_{os.path.basename(pdf_path)}")
+        
+        # Abrir el PDF original
+        reader = PdfReader(pdf_path)
+        writer = PdfWriter()
+        
+        # Para cada página, añadir el encabezado correcto
+        for i, page in enumerate(reader.pages):
+            # Crear un PDF en memoria con el encabezado
+            packet = io.BytesIO()
+            can = canvas.Canvas(packet, pagesize=letter)
+            
+            # Configurar el encabezado con el número de parte correcto
+            part_number = i + 1
+            header_text = f"{base_code}_Part{part_number}"
+            
+            # Añadir el texto del encabezado en la posición correcta (esquina superior izquierda)
+            can.setFont("Helvetica", 10)
+            can.drawString(30, 780, header_text)
+            can.save()
+            
+            # Mover al inicio del BytesIO
+            packet.seek(0)
+            watermark = PdfReader(packet)
+            
+            # Fusionar la página original con el encabezado
+            page.merge_page(watermark.pages[0])
+            writer.add_page(page)
+            
+            logger.info(f"Añadido encabezado a página {part_number}: {header_text}")
+        
+        # Guardar el PDF modificado
+        with open(output_pdf, "wb") as output_stream:
+            writer.write(output_stream)
+        
+        logger.info(f"PDF con encabezados modificados guardado en: {output_pdf}")
+        
+        # Reemplazar el PDF original con el modificado
+        shutil.move(output_pdf, pdf_path)
+        
+        return pdf_path
+    
+    except Exception as e:
+        logger.error(f"Error al añadir encabezados al PDF: {str(e)}")
+        return None
 
 async def convert_to_pdf(docx_path, output_dir):
     """
