@@ -165,33 +165,33 @@ async def modify_document_headers(docx_path):
         else:
             logger.info(f"Código base identificado: {base_code}")
         
-        # Crear un nuevo documento con los encabezados correctos
-        new_doc = Document()
-        
-        # Copiar propiedades del documento original
+        # Modificar directamente los encabezados del documento existente
+        # sin crear un nuevo documento para preservar todo el formato
         for section_idx, section in enumerate(doc.sections):
-            # Si no es la primera sección, agregar un salto de sección
-            if section_idx > 0:
-                new_doc.add_section()
-            
-            # Obtener la sección actual en el nuevo documento
-            new_section = new_doc.sections[section_idx]
-            
             # Configurar el encabezado con el número de parte correcto
             part_number = section_idx + 1
-            header = new_section.header
-            paragraph = header.paragraphs[0]
-            paragraph.text = f"{base_code}_Part{part_number}"
-            paragraph.alignment = 1  # Centrado
+            header_text = f"{base_code}_Part{part_number}"
             
-            logger.info(f"Creado encabezado para sección {section_idx+1}: {base_code}_Part{part_number}")
-        
-        # Copiar el contenido del documento original
-        for paragraph in doc.paragraphs:
-            new_doc.add_paragraph(paragraph.text)
+            # Modificar el encabezado de la sección
+            header = section.header
+            
+            # Si el encabezado está vacío, añadir un nuevo párrafo
+            if len(header.paragraphs) == 0 or not header.paragraphs[0].text.strip():
+                if len(header.paragraphs) == 0:
+                    header.add_paragraph()
+                header.paragraphs[0].text = header_text
+                logger.info(f"Creado encabezado para sección {part_number}: {header_text}")
+            else:
+                # Modificar el primer párrafo del encabezado
+                for paragraph in header.paragraphs:
+                    if paragraph.text.strip():
+                        # Reemplazar el texto del encabezado
+                        paragraph.text = header_text
+                        logger.info(f"Modificado encabezado para sección {part_number}: {header_text}")
+                        break
         
         # Guardar el documento modificado
-        new_doc.save(modified_docx)
+        doc.save(modified_docx)
         logger.info(f"Documento con encabezados modificados guardado en: {modified_docx}")
         
         return modified_docx
