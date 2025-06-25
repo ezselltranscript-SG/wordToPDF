@@ -78,9 +78,26 @@ async def convert_docx_to_pdf(docx_path, pdf_path):
         document_title = await extract_document_title(docx_path)
         logger.info(f"Título del documento extraído: {document_title}")
         
+        # Crear directorio para el PDF si no existe
+        pdf_dir = os.path.dirname(pdf_path)
+        os.makedirs(pdf_dir, exist_ok=True)
+        
         # Usar LibreOffice para la conversión
         logger.info("Usando LibreOffice para la conversión")
-        return await convert_with_libreoffice(docx_path, pdf_path)
+        result = await convert_with_libreoffice(docx_path, pdf_path)
+        
+        if result:
+            logger.info(f"Conversión exitosa a: {pdf_path}")
+            # Verificar que el archivo realmente existe
+            if os.path.exists(pdf_path):
+                logger.info(f"Verificado: el archivo PDF existe en {pdf_path}")
+                return True
+            else:
+                logger.error(f"Error: el archivo PDF no existe en {pdf_path} a pesar de conversión exitosa")
+                return False
+        else:
+            logger.error("La conversión con LibreOffice falló")
+            return False
     except Exception as e:
         logger.error(f"Error al convertir el documento: {str(e)}")
         return False
@@ -92,8 +109,19 @@ async def convert_with_libreoffice(docx_path, pdf_path):
     """
     import subprocess
     import platform
+    import shutil
+    import glob
+    import time
     
     try:
+        # Obtener nombres base para verificaciones
+        docx_filename = os.path.basename(docx_path)
+        docx_name_without_ext = os.path.splitext(docx_filename)[0]
+        output_dir = "outputs"
+        
+        # Asegurarse de que el directorio de salida existe
+        os.makedirs(output_dir, exist_ok=True)
+        
         # Determinar el comando según el sistema operativo
         if platform.system() == "Windows":
             # En Windows, buscar la instalación de LibreOffice
@@ -113,47 +141,65 @@ async def convert_with_libreoffice(docx_path, pdf_path):
                 logger.error("No se encontró LibreOffice instalado")
                 return False
             
-            # Comando para Windows - versión básica que sabemos que funciona
+            # Comando para Windows
             cmd = [
                 soffice_path,
                 '--headless',
                 '--convert-to', 'pdf',
-                '--outdir', os.path.dirname(pdf_path),
+                '--outdir', output_dir,
                 str(docx_path)
             ]
         else:
-            # Comando para Linux/Mac - versión básica que sabemos que funciona
+            # Comando para Linux/Mac
             cmd = [
                 'libreoffice',
                 '--headless',
                 '--convert-to', 'pdf',
-                '--outdir', os.path.dirname(pdf_path),
+                '--outdir', output_dir,
                 str(docx_path)
             ]
         
         # Ejecutar el comando
         logger.info(f"Ejecutando comando: {' '.join(cmd)}")
         process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-        stdout, stderr = process.communicate(timeout=120)  # Aumentar timeout a 2 minutos
+        stdout, stderr = process.communicate(timeout=120)  # Timeout de 2 minutos
+        
+        # Registrar la salida para diagnóstico
+        logger.info(f"Salida de LibreOffice: {stdout.decode() if stdout else 'Sin salida'}")
+        if stderr:
+            logger.info(f"Error de LibreOffice: {stderr.decode()}")
+        
+        # Esperar un momento para asegurar que el archivo se ha escrito
+        time.sleep(2)
         
         # Verificar si la conversión fue exitosa
         if process.returncode == 0:
-            # LibreOffice guarda el archivo con el mismo nombre pero extensión .pdf
-            generated_pdf = os.path.splitext(docx_path)[0] + ".pdf"
+            # Buscar el archivo PDF generado en el directorio de salida
+            expected_pdf = os.path.join(output_dir, f"{docx_name_without_ext}.pdf")
+            logger.info(f"Buscando PDF generado en: {expected_pdf}")
             
-            if os.path.exists(generated_pdf):
-                # Si el PDF generado no está en la ubicación deseada, moverlo
-                if generated_pdf != pdf_path:
-                    shutil.move(generated_pdf, pdf_path)
-                
-                logger.info(f"PDF creado exitosamente con LibreOffice en: {pdf_path}")
+            # Listar todos los archivos en el directorio de salida para diagnóstico
+            output_files = os.listdir(output_dir)
+            logger.info(f"Archivos en directorio de salida: {output_files}")
+            
+            if os.path.exists(expected_pdf):
+                # Mover el PDF generado a la ubicación final
+                shutil.copy2(expected_pdf, pdf_path)
+                logger.info(f"PDF copiado exitosamente a: {pdf_path}")
                 return True
             else:
-                logger.error(f"El archivo PDF no fue generado en la ubicación esperada: {generated_pdf}")
-                # Registrar la salida de LibreOffice para diagnóstico
-                logger.error(f"Salida de LibreOffice: {stdout.decode() if stdout else 'Sin salida'}")
-                logger.error(f"Error de LibreOffice: {stderr.decode() if stderr else 'Sin errores reportados'}")
-                return False
+                # Buscar cualquier PDF que pueda haber sido generado con otro nombre
+                pdf_files = glob.glob(f"{output_dir}/*.pdf")
+                if pdf_files:
+                    # Usar el primer PDF encontrado
+                    found_pdf = pdf_files[0]
+                    logger.info(f"Encontrado PDF alternativo: {found_pdf}")
+                    shutil.copy2(found_pdf, pdf_path)
+                    logger.info(f"PDF copiado exitosamente a: {pdf_path}")
+                    return True
+                else:
+                    logger.error(f"No se encontró ningún PDF generado en {output_dir}")
+                    return False
         else:
             logger.error(f"Error al ejecutar LibreOffice (código {process.returncode}): {stderr.decode() if stderr else 'Sin detalles'}")
             return False
@@ -221,15 +267,20 @@ async def convert_word_to_pdf(file: UploadFile = File(...), background_tasks: Ba
     try:
         # Guardar el archivo subido
         with open(input_path, "wb") as buffer:
-            shutil.copyfileobj(file.file, buffer)
+            content = await file.read()
+            buffer.write(content)
         
         logger.info(f"Archivo guardado en {input_path}")
         
         # Convertir el documento Word a PDF
-        conversion_result = await convert_docx_to_pdf(input_path, output_path)
+        conversion_result = await convert_docx_to_pdf(str(input_path), str(output_path))
         
         if not conversion_result or not output_path.exists():
             logger.error(f"Error al convertir {input_path} a PDF")
+            # Limpiar archivo temporal en caso de error
+            if input_path.exists():
+                os.remove(input_path)
+                logger.info(f"Archivo temporal eliminado después de error: {input_path}")
             raise HTTPException(status_code=500, detail="Error al convertir el documento")
         
         logger.info(f"Conversión exitosa: {output_path}")
@@ -240,40 +291,30 @@ async def convert_word_to_pdf(file: UploadFile = File(...), background_tasks: Ba
                 if input_path.exists():
                     os.remove(input_path)
                     logger.info(f"Archivo temporal eliminado: {input_path}")
-                # El archivo PDF se eliminará después de enviarse al cliente
-                if output_path.exists():
-                    os.remove(output_path)
-                    logger.info(f"Archivo PDF temporal eliminado: {output_path}")
             except Exception as e:
                 logger.error(f"Error al limpiar archivos temporales: {str(e)}")
         
-        # Programar la limpieza de archivos temporales en segundo plano
+        # Programar la limpieza en segundo plano si está disponible
         if background_tasks:
             background_tasks.add_task(cleanup_temp_files)
         
         # Devolver el archivo PDF
         return FileResponse(
-            path=output_path,
-            filename=f"{Path(file.filename).stem}.pdf",
+            path=str(output_path),
             media_type="application/pdf",
-            headers={
-                "Content-Disposition": f"attachment; filename={Path(file.filename).stem}.pdf"
-            }
+            filename=f"{Path(file.filename).stem}.pdf"
         )
-    
-    except Exception as e:
-        # Manejar cualquier error durante la conversión
-        logger.error(f"Error en la conversión: {str(e)}")
         
-        # Limpiar archivos temporales en caso de error
-        if input_path.exists():
+    except Exception as e:
+        logger.error(f"Error en la conversión: {str(e)}")
+        # Limpiar archivo temporal en caso de error
+        if 'input_path' in locals() and input_path.exists():
             try:
                 os.remove(input_path)
                 logger.info(f"Archivo temporal eliminado después de error: {input_path}")
-            except Exception as cleanup_error:
-                logger.error(f"Error al limpiar archivo temporal: {str(cleanup_error)}")
-        
-        raise HTTPException(status_code=500, detail=f"Error en la conversión: {str(e)}")
+            except Exception:
+                pass
+        raise HTTPException(status_code=500, detail="Error al convertir el documento")
 
 
 @app.get("/", summary="Información de la API")
