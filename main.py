@@ -1,11 +1,15 @@
-from fastapi import FastAPI, UploadFile, File, HTTPException, BackgroundTasks
+from fastapi import FastAPI, UploadFile, File, HTTPException, BackgroundTasks, Form
 from fastapi.responses import FileResponse
 from fastapi.middleware.cors import CORSMiddleware
 import os
 import uuid
 import subprocess
 import logging
+import re
+import tempfile
+import shutil
 from pathlib import Path
+from docx import Document
 
 # Configurar logging
 logging.basicConfig(level=logging.INFO)
@@ -61,19 +65,35 @@ async def convert_word_to_pdf(file: UploadFile = File(...), background_tasks: Ba
         
         logger.info(f"Archivo guardado en {input_path}")
         
+        # Modificar el documento para corregir los encabezados
+        modified_docx = await modify_document_headers(str(input_path))
+        
+        if not modified_docx:
+            logger.error(f"Error al modificar encabezados en {input_path}")
+            raise HTTPException(status_code=500, detail="Error al procesar el documento")
+        
         # Convertir a PDF usando LibreOffice
         pdf_filename = f"{Path(file.filename).stem}.pdf"
-        output_pdf = await convert_to_pdf(str(input_path), str(OUTPUT_DIR))
+        output_pdf = await convert_to_pdf(modified_docx, str(OUTPUT_DIR))
         
         if not output_pdf:
-            logger.error(f"Error al convertir {input_path}")
+            logger.error(f"Error al convertir {modified_docx}")
             raise HTTPException(status_code=500, detail="Error al convertir el documento")
         
         logger.info(f"Conversión exitosa: {output_pdf}")
         
-        # Limpiar archivo temporal
+        # Limpiar archivos temporales
         if background_tasks:
-            background_tasks.add_task(lambda: os.remove(input_path) if os.path.exists(input_path) else None)
+            def cleanup():
+                for path in [input_path, modified_docx]:
+                    if os.path.exists(str(path)):
+                        try:
+                            os.remove(str(path))
+                            logger.info(f"Archivo temporal eliminado: {path}")
+                        except Exception as e:
+                            logger.error(f"Error al eliminar archivo temporal {path}: {str(e)}")
+            
+            background_tasks.add_task(cleanup)
         
         # Devolver el archivo PDF
         return FileResponse(
@@ -88,6 +108,87 @@ async def convert_word_to_pdf(file: UploadFile = File(...), background_tasks: Ba
         if os.path.exists(input_path):
             os.remove(input_path)
         raise HTTPException(status_code=500, detail="Error al convertir el documento")
+
+async def modify_document_headers(docx_path):
+    """
+    Modifica los encabezados del documento Word para que cada página tenga el formato correcto
+    con Part1, Part2, Part3, etc.
+    """
+    try:
+        # Extraer el nombre base del archivo
+        original_filename = os.path.basename(docx_path).split('_', 1)[1] if '_' in os.path.basename(docx_path) else os.path.basename(docx_path)
+        
+        # Crear un archivo temporal para el documento modificado
+        temp_dir = tempfile.mkdtemp()
+        modified_docx = os.path.join(temp_dir, f"modified_{os.path.basename(docx_path)}")
+        
+        # Copiar el archivo original al temporal
+        shutil.copy2(docx_path, modified_docx)
+        
+        # Abrir el documento con python-docx
+        doc = Document(modified_docx)
+        
+        # Buscar y reemplazar el encabezado en el documento
+        # Identificar el patrón actual (062725-0620-B04-25_Part1 o similar)
+        header_pattern = re.compile(r'(\d+-\d+-[A-Za-z]\d+-\d+)(?:_Part\d+)?', re.IGNORECASE)
+        
+        # Extraer el código base del nombre del archivo
+        base_code = None
+        file_match = header_pattern.search(original_filename)
+        if file_match:
+            base_code = file_match.group(1).lower()
+        else:
+            # Si no se encuentra en el nombre del archivo, buscar en el contenido del documento
+            for paragraph in doc.paragraphs:
+                match = header_pattern.search(paragraph.text)
+                if match:
+                    base_code = match.group(1).lower()
+                    break
+        
+        if not base_code:
+            logger.warning("No se pudo identificar el código base en el documento")
+            return docx_path
+        
+        logger.info(f"Código base identificado: {base_code}")
+        
+        # Modificar encabezados en cada sección del documento
+        # En Word, cada sección puede tener su propio encabezado
+        for i, section in enumerate(doc.sections):
+            # Determinar qué número de parte corresponde a esta sección
+            part_number = i + 1
+            
+            # Modificar el encabezado de la sección
+            header = section.header
+            
+            # Si el encabezado está vacío, añadir un nuevo párrafo
+            if len(header.paragraphs) == 0 or not header.paragraphs[0].text.strip():
+                header.paragraphs[0].text = f"{base_code}_Part{part_number}"
+                logger.info(f"Encabezado creado: {base_code}_Part{part_number}")
+            else:
+                # Modificar el primer párrafo del encabezado
+                for paragraph in header.paragraphs:
+                    if paragraph.text.strip():
+                        # Reemplazar todo el texto del párrafo o solo el patrón encontrado
+                        match = header_pattern.search(paragraph.text)
+                        if match:
+                            # Reemplazar solo la parte que coincide con el patrón
+                            paragraph.text = header_pattern.sub(f"{base_code}_Part{part_number}", paragraph.text)
+                        else:
+                            # Si no hay coincidencia, simplemente establecer el nuevo texto
+                            paragraph.text = f"{base_code}_Part{part_number}"
+                        
+                        logger.info(f"Encabezado modificado a: {paragraph.text}")
+                        break
+        
+        # Guardar el documento modificado
+        doc.save(modified_docx)
+        logger.info(f"Documento con encabezados modificados guardado en: {modified_docx}")
+        
+        return modified_docx
+    
+    except Exception as e:
+        logger.error(f"Error al modificar encabezados del documento: {str(e)}")
+        return docx_path  # Devolver el documento original si hay error
 
 async def convert_to_pdf(docx_path, output_dir):
     """
