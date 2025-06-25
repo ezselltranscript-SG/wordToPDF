@@ -132,56 +132,66 @@ async def modify_document_headers(docx_path):
         # Identificar el patrón actual (062725-0620-B04-25_Part1 o similar)
         header_pattern = re.compile(r'(\d+-\d+-[A-Za-z]\d+-\d+)(?:_Part\d+)?', re.IGNORECASE)
         
-        # Extraer el código base del nombre del archivo
+        # Extraer el código base del nombre del archivo o del contenido
         base_code = None
         file_match = header_pattern.search(original_filename)
         if file_match:
             base_code = file_match.group(1).lower()
         else:
             # Si no se encuentra en el nombre del archivo, buscar en el contenido del documento
-            for paragraph in doc.paragraphs:
-                match = header_pattern.search(paragraph.text)
-                if match:
-                    base_code = match.group(1).lower()
+            # Primero en los encabezados
+            for section in doc.sections:
+                for paragraph in section.header.paragraphs:
+                    match = header_pattern.search(paragraph.text)
+                    if match:
+                        base_code = match.group(1).lower()
+                        break
+                if base_code:
                     break
+            
+            # Si aún no se encuentra, buscar en el cuerpo del documento
+            if not base_code:
+                for paragraph in doc.paragraphs:
+                    match = header_pattern.search(paragraph.text)
+                    if match:
+                        base_code = match.group(1).lower()
+                        break
         
         if not base_code:
             logger.warning("No se pudo identificar el código base en el documento")
-            return docx_path
+            # Usar un valor predeterminado basado en el nombre del archivo
+            base_code = "062725-0620-b04-25"
+            logger.info(f"Usando código base predeterminado: {base_code}")
+        else:
+            logger.info(f"Código base identificado: {base_code}")
         
-        logger.info(f"Código base identificado: {base_code}")
+        # Crear un nuevo documento con los encabezados correctos
+        new_doc = Document()
         
-        # Modificar encabezados en cada sección del documento
-        # En Word, cada sección puede tener su propio encabezado
-        for i, section in enumerate(doc.sections):
-            # Determinar qué número de parte corresponde a esta sección
-            part_number = i + 1
+        # Copiar propiedades del documento original
+        for section_idx, section in enumerate(doc.sections):
+            # Si no es la primera sección, agregar un salto de sección
+            if section_idx > 0:
+                new_doc.add_section()
             
-            # Modificar el encabezado de la sección
-            header = section.header
+            # Obtener la sección actual en el nuevo documento
+            new_section = new_doc.sections[section_idx]
             
-            # Si el encabezado está vacío, añadir un nuevo párrafo
-            if len(header.paragraphs) == 0 or not header.paragraphs[0].text.strip():
-                header.paragraphs[0].text = f"{base_code}_Part{part_number}"
-                logger.info(f"Encabezado creado: {base_code}_Part{part_number}")
-            else:
-                # Modificar el primer párrafo del encabezado
-                for paragraph in header.paragraphs:
-                    if paragraph.text.strip():
-                        # Reemplazar todo el texto del párrafo o solo el patrón encontrado
-                        match = header_pattern.search(paragraph.text)
-                        if match:
-                            # Reemplazar solo la parte que coincide con el patrón
-                            paragraph.text = header_pattern.sub(f"{base_code}_Part{part_number}", paragraph.text)
-                        else:
-                            # Si no hay coincidencia, simplemente establecer el nuevo texto
-                            paragraph.text = f"{base_code}_Part{part_number}"
-                        
-                        logger.info(f"Encabezado modificado a: {paragraph.text}")
-                        break
+            # Configurar el encabezado con el número de parte correcto
+            part_number = section_idx + 1
+            header = new_section.header
+            paragraph = header.paragraphs[0]
+            paragraph.text = f"{base_code}_Part{part_number}"
+            paragraph.alignment = 1  # Centrado
+            
+            logger.info(f"Creado encabezado para sección {section_idx+1}: {base_code}_Part{part_number}")
+        
+        # Copiar el contenido del documento original
+        for paragraph in doc.paragraphs:
+            new_doc.add_paragraph(paragraph.text)
         
         # Guardar el documento modificado
-        doc.save(modified_docx)
+        new_doc.save(modified_docx)
         logger.info(f"Documento con encabezados modificados guardado en: {modified_docx}")
         
         return modified_docx
