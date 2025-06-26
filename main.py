@@ -243,11 +243,16 @@ async def add_page_headers_to_pdf(pdf_path, base_code):
             packet = io.BytesIO()
             can = canvas.Canvas(packet, pagesize=letter)
             
+            # Dibujar un rectángulo blanco para cubrir el encabezado original
+            can.setFillColorRGB(1, 1, 1)  # Color blanco
+            can.rect(20, 770, 250, 20, fill=True, stroke=False)  # Rectángulo que cubre el encabezado original
+            
             # Configurar el encabezado con el número de parte correcto
             part_number = i + 1
             header_text = f"{base_code}_Part{part_number}"
             
             # Añadir el texto del encabezado en la posición correcta (esquina superior izquierda)
+            can.setFillColorRGB(0, 0, 0)  # Color negro para el texto
             can.setFont("Helvetica", 10)
             can.drawString(30, 780, header_text)
             can.save()
