@@ -78,12 +78,10 @@ async def convert_word_to_pdf(file: UploadFile = File(...), background_tasks: Ba
         
         modified_docx, doc_base_code = result
         
-        # Usar el código base extraído del documento
-        base_code = doc_base_code
-        if not base_code:
-            # Extraer el código base del nombre del archivo exactamente como aparece
-            base_code = Path(file.filename).stem
-            logger.info(f"Código base del nombre del archivo: {base_code}")
+        # Usar exactamente el nombre original del archivo sin modificaciones
+        base_code = Path(file.filename).stem
+        # Asegurarse de que no se modifique el formato (no convertir a minúsculas, etc.)
+        logger.info(f"Código base del nombre del archivo: {base_code}")
         
         # Convertir a PDF usando LibreOffice
         pdf_filename = f"{Path(file.filename).stem}.pdf"
@@ -208,19 +206,19 @@ async def add_page_headers_to_pdf(pdf_path, base_code):
             packet = io.BytesIO()
             can = canvas.Canvas(packet, pagesize=letter)
             
-            # Dibujar un rectángulo blanco para cubrir el encabezado original
+            # Dibujar un rectángulo blanco para cubrir completamente cualquier encabezado existente
             can.setFillColorRGB(1, 1, 1)  # Color blanco
-            can.rect(20, 770, 250, 20, fill=True, stroke=False)  # Rectángulo que cubre el encabezado original
+            can.rect(0, 780, 600, 30, fill=True, stroke=False)  # Rectángulo que cubre toda la parte superior
             
             # Configurar el encabezado con el número de parte correcto
             part_number = i + 1
-            # Usar el código base exactamente como viene, sin modificarlo
+            # Usar exactamente el formato "codigo_base_PartN" sin ningún prefijo adicional
             header_text = f"{base_code}_Part{part_number}"
             
             # Añadir el texto del encabezado en la posición correcta (esquina superior izquierda)
             can.setFillColorRGB(0, 0, 0)  # Color negro para el texto
             can.setFont("Helvetica", 10)
-            can.drawString(30, 780, header_text)
+            can.drawString(10, 790, header_text)  # Ajustar posición para que sea visible y coincida con las imágenes
             can.save()
             
             # Mover al inicio del BytesIO
