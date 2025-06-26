@@ -176,7 +176,18 @@ async def modify_document_headers(docx_path):
             
             logger.info(f"Eliminado encabezado para sección {part_number}")
         
-        # Cambiar la fuente y tamaño de todo el contenido a Times New Roman 10
+        # Forzar Times New Roman 10 en todos los estilos
+        try:
+            from docx.enum.style import WD_STYLE_TYPE
+            for style in doc.styles:
+                if style.type in (WD_STYLE_TYPE.PARAGRAPH, WD_STYLE_TYPE.CHARACTER):
+                    if style.font is not None:
+                        style.font.name = 'Times New Roman'
+                        style.font.size = Pt(10)
+        except Exception as e:
+            logger.warning(f"No se pudo modificar estilos globales: {e}")
+
+        # Cambiar la fuente y tamaño manualmente en cada ejecución de texto
         for paragraph in doc.paragraphs:
             for run in paragraph.runs:
                 run.font.name = 'Times New Roman'
