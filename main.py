@@ -14,6 +14,7 @@ from PyPDF2 import PdfWriter, PdfReader
 import io
 from reportlab.pdfgen import canvas
 from reportlab.lib.pagesizes import letter
+from docx.shared import Pt
 
 # Configurar logging
 logging.basicConfig(level=logging.INFO)
@@ -174,6 +175,20 @@ async def modify_document_headers(docx_path):
             header.add_paragraph()
             
             logger.info(f"Eliminado encabezado para sección {part_number}")
+        
+        # Cambiar la fuente y tamaño de todo el contenido a Times New Roman 10
+        for paragraph in doc.paragraphs:
+            for run in paragraph.runs:
+                run.font.name = 'Times New Roman'
+                run.font.size = Pt(10)
+        # Cambiar también en las tablas
+        for table in doc.tables:
+            for row in table.rows:
+                for cell in row.cells:
+                    for paragraph in cell.paragraphs:
+                        for run in paragraph.runs:
+                            run.font.name = 'Times New Roman'
+                            run.font.size = Pt(10)
         
         # Guardar el documento modificado
         doc.save(modified_docx)
