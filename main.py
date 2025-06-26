@@ -70,21 +70,24 @@ async def convert_word_to_pdf(file: UploadFile = File(...), background_tasks: Ba
         logger.info(f"Archivo guardado en {input_path}")
         
         # Modificar el documento para corregir los encabezados
-        modified_docx = await modify_document_headers(str(input_path))
+        result = await modify_document_headers(str(input_path))
         
-        if not modified_docx:
+        if not result or not result[0]:
             logger.error(f"Error al modificar encabezados en {input_path}")
             raise HTTPException(status_code=500, detail="Error al procesar el documento")
         
-        # Extraer el código base del nombre del archivo
-        base_code = None
-        # Intentar extraer el código base del nombre del archivo
-        match = re.search(r'([0-9-]+[a-zA-Z0-9-]+)', file.filename)
-        if match:
-            base_code = match.group(1).lower()
-        else:
-            # Si no se encuentra en el nombre, usar un valor predeterminado
-            base_code = Path(file.filename).stem.lower()
+        modified_docx, doc_base_code = result
+        
+        # Usar el código base extraído del documento o extraerlo del nombre del archivo
+        base_code = doc_base_code
+        if not base_code:
+            # Intentar extraer el código base del nombre del archivo
+            match = re.search(r'([0-9-]+[a-zA-Z0-9-]+)', file.filename)
+            if match:
+                base_code = match.group(1).lower()
+            else:
+                # Si no se encuentra en el nombre, usar un valor predeterminado
+                base_code = Path(file.filename).stem.lower()
         
         # Convertir a PDF usando LibreOffice
         pdf_filename = f"{Path(file.filename).stem}.pdf"
@@ -141,88 +144,77 @@ async def modify_document_headers(docx_path):
     try:
         # Extraer el nombre base del archivo
         original_filename = os.path.basename(docx_path).split('_', 1)[1] if '_' in os.path.basename(docx_path) else os.path.basename(docx_path)
-        
-        # Crear un archivo temporal para el documento modificado
         temp_dir = tempfile.mkdtemp()
-        modified_docx = os.path.join(temp_dir, f"modified_{os.path.basename(docx_path)}")
+        base_name = os.path.basename(docx_path)
+        modified_docx = os.path.join(temp_dir, f"modified_{base_name}")
         
-        # Copiar el archivo original al temporal
-        shutil.copy2(docx_path, modified_docx)
+        # Abrir el documento original
+        doc = Document(docx_path)
         
-        # Abrir el documento con python-docx
-        doc = Document(modified_docx)
-        
-        # Buscar y reemplazar el encabezado en el documento
-        # Identificar el patrón actual (062725-0620-B04-25_Part1 o similar)
-        header_pattern = re.compile(r'(\d+-\d+-[A-Za-z]\d+-\d+)(?:_Part\d+)?', re.IGNORECASE)
-        
-        # Extraer el código base del nombre del archivo o del contenido
+        # Extraer el código base del nombre del archivo
         base_code = None
-        file_match = header_pattern.search(original_filename)
-        if file_match:
-            base_code = file_match.group(1).lower()
+        
+        # Intentar extraer el código base del nombre del archivo
+        match = re.search(r'([0-9-]+[a-zA-Z0-9-]+)', base_name)
+        if match:
+            base_code = match.group(1).lower()
+            logger.info(f"Código base identificado: {base_code}")
         else:
-            # Si no se encuentra en el nombre del archivo, buscar en el contenido del documento
-            # Primero en los encabezados
+            # Si no se encuentra en el nombre, buscar en los encabezados existentes
             for section in doc.sections:
-                for paragraph in section.header.paragraphs:
-                    match = header_pattern.search(paragraph.text)
-                    if match:
-                        base_code = match.group(1).lower()
-                        break
+                header = section.header
+                for paragraph in header.paragraphs:
+                    if paragraph.text.strip():
+                        match = re.search(r'([0-9-]+[a-zA-Z0-9-]+)', paragraph.text)
+                        if match:
+                            base_code = match.group(1).lower()
+                            logger.info(f"Código base identificado de encabezado: {base_code}")
+                            break
                 if base_code:
                     break
             
-            # Si aún no se encuentra, buscar en el cuerpo del documento
+            # Si aún no se encuentra, buscar en el contenido del documento
             if not base_code:
                 for paragraph in doc.paragraphs:
-                    match = header_pattern.search(paragraph.text)
-                    if match:
-                        base_code = match.group(1).lower()
-                        break
+                    if paragraph.text.strip():
+                        match = re.search(r'([0-9-]+[a-zA-Z0-9-]+)', paragraph.text)
+                        if match:
+                            base_code = match.group(1).lower()
+                            logger.info(f"Código base identificado del contenido: {base_code}")
+                            break
         
+        # Si no se encuentra un código base, usar un valor predeterminado
         if not base_code:
-            logger.warning("No se pudo identificar el código base en el documento")
-            # Usar un valor predeterminado basado en el nombre del archivo
-            base_code = "062725-0620-b04-25"
-            logger.info(f"Usando código base predeterminado: {base_code}")
-        else:
-            logger.info(f"Código base identificado: {base_code}")
+            base_code = "transcript"
+            logger.warning(f"No se identificó código base, usando valor predeterminado: {base_code}")
         
-        # Modificar directamente los encabezados del documento existente
-        # sin crear un nuevo documento para preservar todo el formato
+        # ELIMINAR COMPLETAMENTE los encabezados de cada sección
         for section_idx, section in enumerate(doc.sections):
-            # Configurar el encabezado con el número de parte correcto
             part_number = section_idx + 1
-            header_text = f"{base_code}_Part{part_number}"
-            
-            # Modificar el encabezado de la sección
             header = section.header
             
-            # Si el encabezado está vacío, añadir un nuevo párrafo
-            if len(header.paragraphs) == 0 or not header.paragraphs[0].text.strip():
-                if len(header.paragraphs) == 0:
-                    header.add_paragraph()
-                header.paragraphs[0].text = header_text
-                logger.info(f"Creado encabezado para sección {part_number}: {header_text}")
-            else:
-                # Modificar el primer párrafo del encabezado
-                for paragraph in header.paragraphs:
-                    if paragraph.text.strip():
-                        # Reemplazar el texto del encabezado
-                        paragraph.text = header_text
-                        logger.info(f"Modificado encabezado para sección {part_number}: {header_text}")
-                        break
+            # Eliminar todo el contenido del encabezado
+            for paragraph in list(header.paragraphs):
+                p = paragraph._element
+                p.getparent().remove(p)
+                paragraph._p = None
+                paragraph._element = None
+            
+            # Añadir un párrafo vacío para mantener la estructura
+            header.add_paragraph()
+            
+            logger.info(f"Eliminado encabezado para sección {part_number}")
         
         # Guardar el documento modificado
         doc.save(modified_docx)
-        logger.info(f"Documento con encabezados modificados guardado en: {modified_docx}")
+        logger.info(f"Documento con encabezados eliminados guardado en: {modified_docx}")
         
-        return modified_docx
-    
+        # Devolver el documento modificado y el código base
+        return modified_docx, base_code
+        
     except Exception as e:
         logger.error(f"Error al modificar encabezados del documento: {str(e)}")
-        return docx_path  # Devolver el documento original si hay error
+        return docx_path, None  # Devolver el documento original si hay error
 
 async def add_page_headers_to_pdf(pdf_path, base_code):
     """
