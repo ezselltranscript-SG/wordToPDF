@@ -78,16 +78,12 @@ async def convert_word_to_pdf(file: UploadFile = File(...), background_tasks: Ba
         
         modified_docx, doc_base_code = result
         
-        # Usar el código base extraído del documento o extraerlo del nombre del archivo
+        # Usar el código base extraído del documento
         base_code = doc_base_code
         if not base_code:
-            # Intentar extraer el código base del nombre del archivo
-            match = re.search(r'([0-9-]+[a-zA-Z0-9-]+)', file.filename)
-            if match:
-                base_code = match.group(1).lower()
-            else:
-                # Si no se encuentra en el nombre, usar un valor predeterminado
-                base_code = Path(file.filename).stem.lower()
+            # Extraer el código base del nombre del archivo exactamente como aparece
+            base_code = Path(file.filename).stem
+            logger.info(f"Código base del nombre del archivo: {base_code}")
         
         # Convertir a PDF usando LibreOffice
         pdf_filename = f"{Path(file.filename).stem}.pdf"
@@ -154,34 +150,10 @@ async def modify_document_headers(docx_path):
         # Extraer el código base del nombre del archivo
         base_code = None
         
-        # Intentar extraer el código base del nombre del archivo
-        match = re.search(r'([0-9-]+[a-zA-Z0-9-]+)', base_name)
-        if match:
-            base_code = match.group(1).lower()
-            logger.info(f"Código base identificado: {base_code}")
-        else:
-            # Si no se encuentra en el nombre, buscar en los encabezados existentes
-            for section in doc.sections:
-                header = section.header
-                for paragraph in header.paragraphs:
-                    if paragraph.text.strip():
-                        match = re.search(r'([0-9-]+[a-zA-Z0-9-]+)', paragraph.text)
-                        if match:
-                            base_code = match.group(1).lower()
-                            logger.info(f"Código base identificado de encabezado: {base_code}")
-                            break
-                if base_code:
-                    break
-            
-            # Si aún no se encuentra, buscar en el contenido del documento
-            if not base_code:
-                for paragraph in doc.paragraphs:
-                    if paragraph.text.strip():
-                        match = re.search(r'([0-9-]+[a-zA-Z0-9-]+)', paragraph.text)
-                        if match:
-                            base_code = match.group(1).lower()
-                            logger.info(f"Código base identificado del contenido: {base_code}")
-                            break
+        # Extraer el código base del nombre del archivo exactamente como aparece
+        # Ejemplo: "062725-0620-b04-25.docx" -> "062725-0620-b04-25"
+        base_code = os.path.splitext(base_name)[0]
+        logger.info(f"Código base identificado: {base_code}")
         
         # Si no se encuentra un código base, usar un valor predeterminado
         if not base_code:
@@ -219,7 +191,8 @@ async def modify_document_headers(docx_path):
 async def add_page_headers_to_pdf(pdf_path, base_code):
     """
     Modifica un PDF para añadir encabezados diferentes a cada página
-    con el formato base_code_Part1, base_code_Part2, etc.
+    con el formato exacto base_code_Part1, base_code_Part2, etc.
+    Mantiene el código base exactamente como está, sin modificarlo.
     """
     try:
         # Crear un nuevo PDF con los encabezados correctos
@@ -241,6 +214,7 @@ async def add_page_headers_to_pdf(pdf_path, base_code):
             
             # Configurar el encabezado con el número de parte correcto
             part_number = i + 1
+            # Usar el código base exactamente como viene, sin modificarlo
             header_text = f"{base_code}_Part{part_number}"
             
             # Añadir el texto del encabezado en la posición correcta (esquina superior izquierda)
